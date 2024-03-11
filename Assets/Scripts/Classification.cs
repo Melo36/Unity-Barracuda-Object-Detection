@@ -5,12 +5,13 @@ using System.Linq;
 using System.Collections;
 using UnityEngine.UI;
 using System;
+using MathNet.Numerics.LinearAlgebra;
 
 public class Classification : MonoBehaviour {
 
-	const int IMAGE_SIZE = 224;
+	const int IMAGE_SIZE = 640;
 	const string INPUT_NAME = "images";
-	const string OUTPUT_NAME = "Softmax";
+	const string OUTPUT_NAME = "output0";
 
 	[Header("Model Stuff")]
 	public NNModel modelFile;
@@ -24,10 +25,12 @@ public class Classification : MonoBehaviour {
 	string[] labels;
 	IWorker worker;
 
-	void Start() {
-        var model = ModelLoader.Load(modelFile);
-        worker = WorkerFactory.CreateWorker(WorkerFactory.Type.ComputePrecompiled, model);
-        LoadLabels();
+	void Start()
+	{
+		var model = ModelLoader.Load(modelFile);
+		worker = WorkerFactory.CreateWorker(WorkerFactory.Type.ComputePrecompiled, model);
+		labels = new string[] { "haferflocken_ja", "spezi", "hallo", "vielleicht" };
+		//LoadLabels();
 	}
 
 	void LoadLabels() {
@@ -60,14 +63,61 @@ public class Classification : MonoBehaviour {
 
 		worker.Execute(inputs);
 		Tensor outputTensor = worker.PeekOutput(OUTPUT_NAME);
-
+		
 		//get largest output
 		List<float> temp = outputTensor.ToReadOnlyArray().ToList();
-		float max = temp.Max();
-		int index = temp.IndexOf(max);
+		int channels = outputTensor.shape.channels;
+		int classes = channels - 4;
+		int amountOfPreds = temp.Count / channels;
+		float[][] probabilites = new float[amountOfPreds][];
 
+		for (int i = 0; i < temp.Count / channels; i++)
+		{
+			probabilites[i] = new float[classes];
+		}
+
+		// Das array wird gefüllt mit  probabilities
+		int probIndex = 0;
+		for (int i = 0; i < temp.Count;)
+		{
+			i += 4;
+			for (int j = 0; j < classes; j++)
+			{
+				probabilites[probIndex][j] = temp[i];
+				i++;
+			}
+
+			probIndex++;
+		}
+		
+		// rausfinden des maximalen Wertes
+		float max = 0f;
+		int iIndex = 0;
+		int jIndex = 0;
+		for (int i = 0; i < amountOfPreds; i++)
+		{
+			for (int j = 0; j < classes; j++)
+			{
+				if (probabilites[i][j] > max)
+				{
+					max = probabilites[i][j];
+					iIndex = i;
+					jIndex = j;
+				}
+			}
+		}
+		
+		// list mit länge von channels machen mit bbox-werten und probabilities
+		List<float> output = new List<float>();
+		for (int i = 0; i < channels; i++)
+		{
+			output.Add(temp[iIndex*channels + i]);
+		}
+		
+		// TODO: add confidence treshold
+		
         //set UI text
-        uiText.text = labels[index];
+        uiText.text = labels[jIndex];
 
         //dispose tensors
         tensor.Dispose();
@@ -83,5 +133,10 @@ public class Classification : MonoBehaviour {
 			transformedPixels[i] = (pixels[i] - 127f) / 128f;
 		}
 		return new Tensor(1, IMAGE_SIZE, IMAGE_SIZE, 3, transformedPixels);
+	}
+
+	public void OnDestroy()
+	{
+		worker?.Dispose();
 	}
 }
